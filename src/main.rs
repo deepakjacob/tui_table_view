@@ -1,37 +1,40 @@
-use std::{cmp, collections::HashMap};
+use std::{cmp, collections::HashMap, hash::Hash};
 
 use cursive::{
     align::HAlign,
     theme::{self, ColorStyle},
     view::{
         scroll::{self, Core},
-        Resizable,
+        Nameable, Resizable,
     },
-    views::{LinearLayout, TextView},
-    Printer, Vec2, View, XY,
+    views::Dialog,
+    Printer, Vec2, View, With,
 };
 
-
 fn main() {
     let mut siv = cursive::default();
-    let cv = TableView;
-    siv.add_layer(cv.fixed_height(45).fixed_width(45));
+    let mut cv = TableView::<ColumnData, ColumnDefinition>::new();
+    siv.add_layer(Dialog::around(cv.with_name("table").min_size((50, 20))).title("Table View"));
     siv.run();
 }
 
-fn main() {
-    let mut siv = cursive::default();
-    let cv = TableView;
-    siv.add_layer(cv.fixed_height(45).fixed_width(45));
-    siv.run();
-}
 // this is the api part
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum ColumnDefinition {
     Name,
     Value,
 }
 
+impl ColumnDefinition {
+    fn as_str(&self) -> &str {
+        match *self {
+            ColumnDefinition::Name => "Name",
+            ColumnDefinition::Value => "Value",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct ColumnData {
     name: String,
     value: String,
@@ -61,8 +64,8 @@ cursive::impl_scroller!(TableView < T, H > ::scroll_core);
 
 impl<T, H> Default for TableView<T, H>
 where
-    T: ColumnView<H>,
-    H: Copy + Clone + 'static,
+    T: ColumnView<H> + PartialEq,
+    H: Eq + Hash + Copy + Clone + 'static,
 {
     /// Creates a new empty `TableView` without any columns.
     ///
@@ -75,7 +78,7 @@ where
 impl<T, H> TableView<T, H>
 where
     T: ColumnView<H>,
-    H: Copy + Clone,
+    H: Eq + Hash + Copy + Clone + 'static,
 {
     pub fn new() -> Self {
         Self {
@@ -110,7 +113,7 @@ where
     }
 
     fn insert_column<S: Into<String>, C: FnOnce(TableColumn<H>) -> TableColumn<H>>(
-        &self,
+        &mut self,
         i: usize,
         column: H,
         title: S,
@@ -129,7 +132,7 @@ where
     pub fn clear(&mut self) {
         self.items.clear();
         self.rows_to_items.clear();
-        self.need_relayout = true;
+        self.needs_relayout = true;
     }
 
     pub fn len(&self) -> usize {
@@ -189,12 +192,6 @@ where
         self.needs_relayout = true;
         &mut self.items
     }
-
-    /// Returns the index of the currently selected item within the underlying
-    /// storage vector.
-    pub fn item(&self) -> Option<usize> {
-        self.rows_to_items.get(self.focus).copied()
-    }
     /// Inserts a new item into the table.
     ///
     /// The currently active sort order is preserved and will be applied to the
@@ -226,7 +223,7 @@ where
 impl<T, H> TableView<T, H>
 where
     T: ColumnView<H>,
-    H: Copy + Clone,
+    H: Eq + Hash + Copy + Clone + 'static,
 {
     fn draw_columns<C: Fn(&Printer, &TableColumn<H>)>(
         &self,
@@ -235,8 +232,8 @@ where
         callback: C,
     ) {
         let mut column_offset = 0;
-        let column_count = self.columns.count();
-        for (index, column) in self.columns.iter.enumerate() {
+        let column_count = self.columns.len();
+        for (index, column) in self.columns.iter().enumerate() {
             let printer = &printer.offset((column_offset, 0)).focused(true);
 
             callback(printer, column);
@@ -306,9 +303,9 @@ where
     }
 }
 
-trait ColumnView<H>
+trait ColumnView<H>: Clone + Sized
 where
-    H: Copy + Clone,
+    H: Eq + Hash + Copy + Clone + 'static,
 {
     fn to_column(&self, parameter: H) -> String;
 }
@@ -387,17 +384,43 @@ impl<H: Copy + Clone + 'static> TableColumn<H> {
     }
 }
 
-impl TableView {}
-
-impl View for TableView {
+impl<T, H> View for TableView<T, H>
+where
+    T: ColumnView<H> + 'static,
+    H: Eq + Hash + Copy + Clone + 'static,
+{
     fn draw(&self, printer: &Printer) {
-        let color = ColorStyle::highlight();
-        printer.with_color(color, |printer| {
-            self.draw_header(printer);
+        self.draw_columns(printer, "╷ ", |printer, column| {
+            let color = theme::ColorStyle::primary();
+            printer.with_color(color, |printer| {
+                column.draw_header(printer);
+            });
         });
-        // printer.print(XY::new(15, 0), "something very important!");
 
-        // printer.print(XY::new(0, 1), "something very important!");
-        // printer.print(XY::new(0, 2), "something very important!");
+        self.draw_columns(
+            &printer.offset((0, 1)).focused(true),
+            "┴─",
+            |printer, column| {
+                printer.print_hline((0, 0), column.width + 1, "─");
+            },
+        );
+
+        // Extend the vertical bars to the end of the view
+        for y in 2..printer.size.y {
+            self.draw_columns(&printer.offset((0, y)), "┆ ", |_, _| ());
+        }
+
+        let printer = &printer.offset((0, 2)).focused(true);
+        scroll::draw(self, printer, Self::draw_content);
+    }
+
+    fn layout(&mut self, size: Vec2) {
+        scroll::layout(
+            self,
+            size.saturating_sub((0, 2)),
+            self.needs_relayout,
+            Self::layout_content,
+            Self::content_required_size,
+        );
     }
 }
