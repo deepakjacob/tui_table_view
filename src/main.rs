@@ -13,7 +13,19 @@ use cursive::{
 
 fn main() {
     let mut siv = cursive::default();
-    let mut cv = TableView::<ColumnData, ColumnDefinition>::new();
+    let mut cv = TableView::<ColumnData, ColumnDefinition>::new()
+        .column(ColumnDefinition::Name, "Name", |c| c.width_percent(50))
+        .column(ColumnDefinition::Value, "Value", |c| c.align(HAlign::Left));
+
+    let mut items = Vec::new();
+    for i in 0..50 {
+        items.push(ColumnData {
+            name: format!("Name {}", i),
+            value: format!("Format {}", i),
+        });
+    }
+
+    cv.set_items(items);
     siv.add_layer(Dialog::around(cv.with_name("table").min_size((50, 20))).title("Table View"));
     siv.run();
 }
